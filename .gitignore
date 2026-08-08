@@ -38,3 +38,6 @@ Desktop.ini
 
 # Rust formatter and compiler backups
 **/*.rs.bk
+
+# ZCode 会话文件，不上传
+/.zcode/
