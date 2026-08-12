@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -58,6 +58,21 @@ impl ProviderProfile {
     }
 }
 
+/// A named optimizer-instruction preset. Templates are a library the user
+/// curates in the console; applying one copies its instruction into the
+/// active `PromptOptimizationConfig::instruction`, which is what the
+/// `optimize_prompt` request actually uses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptOptimizationTemplate {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub instruction: String,
+}
+
 /// Prompt-optimization settings. The API key follows the notification-channel
 /// credential pattern: redacted to the renderer, restored on save, cleared
 /// only on explicit request.
@@ -82,6 +97,10 @@ pub struct PromptOptimizationConfig {
     /// default system prompt is used.
     #[serde(default)]
     pub instruction: String,
+    /// Curated instruction presets shown by the console and the composer
+    /// button menu. Not secrets; returned to the renderer as-is.
+    #[serde(default)]
+    pub templates: Vec<PromptOptimizationTemplate>,
 }
 
 fn default_prompt_optimization_protocol() -> RelayProtocol {
@@ -99,6 +118,7 @@ impl Default for PromptOptimizationConfig {
             model: String::new(),
             protocol: default_prompt_optimization_protocol(),
             instruction: String::new(),
+            templates: Vec::new(),
         }
     }
 }
@@ -111,6 +131,23 @@ impl PromptOptimizationConfig {
         self.clear_api_key = false;
         self.model = self.model.trim().to_string();
         self.instruction = self.instruction.trim().to_string();
+        for template in &mut self.templates {
+            template.name = template.name.trim().to_string();
+            template.instruction = template.instruction.trim().to_string();
+            if template.id.trim().is_empty() {
+                template.id = Uuid::new_v4().to_string();
+            } else {
+                template.id = template.id.trim().to_string();
+            }
+        }
+        // Drop empty presets and keep the first occurrence per id so a
+        // malformed config cannot bloat the template library.
+        let mut seen_ids = HashSet::new();
+        self.templates.retain(|template| {
+            !template.name.is_empty()
+                && !template.instruction.is_empty()
+                && seen_ids.insert(template.id.clone())
+        });
     }
 
     pub fn merge_redacted_secrets(&mut self, previous: &Self) {
@@ -917,5 +954,44 @@ mod tests {
 
         assert!(incoming.prompt_optimization.api_key.is_empty());
         assert!(!incoming.prompt_optimization.api_key_configured);
+    }
+
+    #[test]
+    fn prompt_optimization_templates_round_trip_and_normalize() {
+        let config = serde_json::from_str::<CodeyConfig>(
+            r#"{"activeProfileId":"","profiles":[],"promptOptimization":{"templates":[
+                {"id":"t1","name":" 简洁版 ","instruction":" 保持简洁 "},
+                {"id":"","name":"无 id","instruction":"补充细节"},
+                {"id":"t1","name":"重复 id","instruction":"重复项"},
+                {"name":"空指令","instruction":"   "},
+                {"name":"","instruction":"无名称"}
+            ]}}"#,
+        )
+        .unwrap()
+        .normalize();
+        let templates = &config.prompt_optimization.templates;
+
+        assert_eq!(templates.len(), 2);
+        assert_eq!(templates[0].id, "t1");
+        assert_eq!(templates[0].name, "简洁版");
+        assert_eq!(templates[0].instruction, "保持简洁");
+        assert!(!templates[1].id.is_empty());
+        assert_eq!(templates[1].name, "无 id");
+        assert_eq!(templates[1].instruction, "补充细节");
+
+        let serialized = serde_json::to_value(&config).unwrap();
+        assert_eq!(
+            serialized["promptOptimization"]["templates"].as_array().map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn prompt_optimization_templates_default_to_empty() {
+        let config = serde_json::from_str::<CodeyConfig>(r#"{"activeProfileId":"","profiles":[]}"#)
+            .unwrap()
+            .normalize();
+
+        assert!(config.prompt_optimization.templates.is_empty());
     }
 }

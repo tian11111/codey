@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 use super::AppState;
 use crate::cc_switch;
 use crate::codex_config::codex_home;
-use crate::config::{CodeyConfig, PromptOptimizationConfig, ProviderProfile};
+use crate::config::{
+    CodeyConfig, PromptOptimizationConfig, PromptOptimizationTemplate, ProviderProfile,
+};
 use crate::error_log;
 use crate::prompt_optimization;
 
@@ -103,8 +105,44 @@ pub async fn sync_prompt_optimization_current_provider_command(
     Ok(json!({ "config": super::redacted_config(&config) }))
 }
 
-pub async fn optimize_prompt_command(state: &Arc<AppState>, text: String) -> Result<Value, String> {
-    let config = state.config.read().await.clone();
+/// Resolves the instruction for a template selection. The special
+/// `default` id (or an empty id) clears the active instruction so the
+/// built-in default applies; anything else must match a saved template.
+fn resolve_template_instruction(
+    templates: &[PromptOptimizationTemplate],
+    template_id: &str,
+) -> Result<String, String> {
+    let template_id = template_id.trim();
+    if template_id.is_empty() || template_id == "default" {
+        return Ok(String::new());
+    }
+    templates
+        .iter()
+        .find(|template| template.id == template_id)
+        .map(|template| template.instruction.clone())
+        .ok_or_else(|| format!("找不到指令模板：{template_id}"))
+}
+
+/// Applies a saved instruction template as the active optimizer instruction
+/// and persists it. The composer menu calls this before optimizing so the
+/// switch flows through the normal config hot-update path;
+/// `optimize_prompt` itself never receives instructions from the renderer.
+pub async fn apply_prompt_optimization_template_command(
+    state: &Arc<AppState>,
+    template_id: String,
+) -> Result<Value, String> {
+    let _config_write_guard = state.config_write_lock.lock().await;
+    let mut config = state.config.read().await.clone();
+    let instruction = resolve_template_instruction(&config.prompt_optimization.templates, &template_id)?;
+    config.prompt_optimization.instruction = instruction;
+    config.prompt_optimization.validate()?;
+    config.settings_revision = config.settings_revision.saturating_add(1);
+    super::save_config_to_store(state, &config).await?;
+    *state.config.write().await = config.clone();
+    Ok(json!({ "config": super::redacted_config(&config) }))
+}
+
+pub async fn optimize_prompt_command(state: &Arc<AppState>, text: String) -> Result<Value, String> {    let config = state.config.read().await.clone();
     let optimization = config.prompt_optimization.clone();
     if !optimization.enabled {
         return Err("提示词优化尚未启用，请先在 Codey 控制台开启".to_string());
@@ -278,5 +316,37 @@ mod tests {
             "https://provider.example/v1"
         );
         assert_eq!(synced.prompt_optimization.model, "gpt-provider");
+    }
+
+    #[test]
+    fn template_instruction_resolution_covers_default_and_missing_ids() {
+        let templates = vec![
+            PromptOptimizationTemplate {
+                id: "concise".to_string(),
+                name: "简洁版".to_string(),
+                instruction: "保持简洁".to_string(),
+            },
+            PromptOptimizationTemplate {
+                id: "detailed".to_string(),
+                name: "详细版".to_string(),
+                instruction: "补充细节".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            resolve_template_instruction(&templates, "concise").unwrap(),
+            "保持简洁"
+        );
+        assert_eq!(
+            resolve_template_instruction(&templates, " detailed ").unwrap(),
+            "补充细节"
+        );
+        assert_eq!(resolve_template_instruction(&templates, "default").unwrap(), "");
+        assert_eq!(resolve_template_instruction(&templates, "").unwrap(), "");
+        assert_eq!(
+            resolve_template_instruction(&templates, "missing").unwrap_err(),
+            "找不到指令模板：missing"
+        );
+        assert!(resolve_template_instruction(&[], "concise").is_err());
     }
 }

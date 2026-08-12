@@ -167,11 +167,13 @@ const createEnvironment = (options = {}) => {
     promptOptimization: {
       enabled: options.enabled ?? true,
       apiKeyConfigured: options.apiKeyConfigured ?? true,
+      templates: options.templates ?? [],
     },
   };
   const optimizeResult = options.optimizeResult ?? {
     optimized: "优化后的提示词",
   };
+  const applyResult = options.applyResult ?? { status: "ok" };
 
   const documentElement = new FakeElement("html");
   const body = new FakeElement("body");
@@ -362,6 +364,7 @@ const createEnvironment = (options = {}) => {
     calls.push({ path, payload });
     if (path === "/settings/get") return config;
     if (path === "/api/optimize_prompt") return optimizeResult;
+    if (path === "/api/apply_prompt_optimization_template") return applyResult;
     return {};
   };
   if (options.bridgeReady !== false) {
@@ -697,4 +700,192 @@ test("re-applies the switch when the console saves config", async () => {
 
   assert.ok(env.getElementById("codey-prompt-optimize-button"));
   assert.equal(env.snapshot().enabled, true);
+});
+
+const TEMPLATES = [
+  { id: "concise", name: "简洁版", instruction: "保持简洁" },
+  { id: "detailed", name: "详细版", instruction: "补充细节" },
+];
+
+test("renders the template menu button only when templates exist", async () => {
+  const withTemplates = createEnvironment({ templates: TEMPLATES });
+  await flush();
+  assert.ok(
+    withTemplates.getElementById("codey-prompt-optimize-menu-button"),
+    "menu button should exist when templates are configured",
+  );
+  assert.equal(withTemplates.snapshot().hasTemplates, true);
+
+  const withoutTemplates = createEnvironment({ templates: [] });
+  await flush();
+  assert.equal(
+    withoutTemplates.getElementById("codey-prompt-optimize-menu-button"),
+    null,
+    "menu button should be absent without templates",
+  );
+  assert.equal(withoutTemplates.snapshot().hasTemplates, false);
+});
+
+test("menu lists the default instruction and every template", async () => {
+  const env = createEnvironment({ templates: TEMPLATES, initialText: "写个博客" });
+  await flush();
+  const menuButton = env.getElementById("codey-prompt-optimize-menu-button");
+  menuButton.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  const menu = env.getElementById("codey-prompt-optimize-menu");
+  assert.ok(menu, "menu should open");
+  assert.equal(menu.style.display, "block");
+  const labels = [...menu.children].map((item) => item.textContent);
+  assert.deepEqual(labels, ["默认指令", "简洁版", "详细版"]);
+});
+
+test("selecting a template applies it then optimizes with text-only payload", async () => {
+  const env = createEnvironment({
+    templates: TEMPLATES,
+    initialText: "写一个博客",
+  });
+  await flush();
+  const menuButton = env.getElementById("codey-prompt-optimize-menu-button");
+  menuButton.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  const menu = env.getElementById("codey-prompt-optimize-menu");
+  const detailedItem = [...menu.children].find(
+    (item) => item.textContent === "详细版",
+  );
+  detailedItem.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flush();
+
+  const applyCall = env.calls.find(
+    (call) => call.path === "/api/apply_prompt_optimization_template",
+  );
+  assert.ok(applyCall, "apply template should be called first");
+  assert.equal(applyCall.payload.templateId, "detailed");
+  const optimizeCall = env.calls.find(
+    (call) => call.path === "/api/optimize_prompt",
+  );
+  assert.ok(optimizeCall, "optimize should follow a successful apply");
+  // `optimize_prompt` never receives instructions from the renderer.
+  assert.deepEqual(Object.keys(optimizeCall.payload), ["text"]);
+  assert.equal(env.textarea.value, "优化后的提示词");
+  assert.equal(menu.style.display, "none");
+});
+
+test("selecting the default instruction clears the active template", async () => {
+  const env = createEnvironment({
+    templates: TEMPLATES,
+    initialText: "写一个博客",
+  });
+  await flush();
+  const menuButton = env.getElementById("codey-prompt-optimize-menu-button");
+  menuButton.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  const menu = env.getElementById("codey-prompt-optimize-menu");
+  const defaultItem = [...menu.children].find(
+    (item) => item.textContent === "默认指令",
+  );
+  defaultItem.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flush();
+
+  const applyCall = env.calls.find(
+    (call) => call.path === "/api/apply_prompt_optimization_template",
+  );
+  assert.equal(applyCall.payload.templateId, "default");
+  assert.ok(
+    env.calls.some((call) => call.path === "/api/optimize_prompt"),
+    "optimize should still run with the built-in instruction",
+  );
+});
+
+test("a failed template apply keeps the original text and skips optimizing", async () => {
+  const env = createEnvironment({
+    templates: TEMPLATES,
+    initialText: "原文",
+    applyResult: { status: "failed", message: "找不到指令模板" },
+  });
+  await flush();
+  const menuButton = env.getElementById("codey-prompt-optimize-menu-button");
+  menuButton.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  const menu = env.getElementById("codey-prompt-optimize-menu");
+  const conciseItem = [...menu.children].find(
+    (item) => item.textContent === "简洁版",
+  );
+  conciseItem.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flush();
+
+  assert.equal(env.textarea.value, "原文");
+  assert.equal(
+    env.calls.some((call) => call.path === "/api/optimize_prompt"),
+    false,
+    "optimize must not run when the template apply failed",
+  );
+  const toast = env.getElementById("codey-runtime-toast");
+  assert.equal(toast.textContent, "找不到指令模板");
+  assert.equal(toast.dataset.tone, "error");
+});
+
+test("template menu is disabled while the composer is empty", async () => {
+  const env = createEnvironment({ templates: TEMPLATES });
+  await flush();
+  const menuButton = env.getElementById("codey-prompt-optimize-menu-button");
+  assert.equal(menuButton.disabled, true);
+
+  menuButton.dispatchEvent({
+    type: "click",
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flush();
+  assert.equal(
+    env.getElementById("codey-prompt-optimize-menu"),
+    null,
+    "menu must not open on an empty composer",
+  );
+});
+
+test("template list refreshes on config changes", async () => {
+  const env = createEnvironment({ templates: [] });
+  await flush();
+  assert.equal(
+    env.getElementById("codey-prompt-optimize-menu-button"),
+    null,
+  );
+
+  env.setConfig({
+    promptOptimization: {
+      enabled: true,
+      apiKeyConfigured: true,
+      templates: TEMPLATES,
+    },
+  });
+  env.emitConfigChanged();
+  await flush();
+
+  assert.ok(env.getElementById("codey-prompt-optimize-menu-button"));
+  assert.equal(env.snapshot().hasTemplates, true);
 });

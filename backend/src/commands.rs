@@ -47,8 +47,9 @@ pub use models::{
 };
 use plugins::{plugin_marketplace_status, repair_plugin_marketplace};
 use prompt_optimization::{
-    fetch_prompt_optimization_models_command, optimize_prompt_command,
-    sync_prompt_optimization_current_provider_command, test_prompt_optimization_command,
+    apply_prompt_optimization_template_command, fetch_prompt_optimization_models_command,
+    optimize_prompt_command, sync_prompt_optimization_current_provider_command,
+    test_prompt_optimization_command,
 };
 use runtime::refresh_injection_status;
 pub(crate) use runtime::{
@@ -547,6 +548,10 @@ pub async fn invoke_api(state: &Arc<AppState>, command: &str, args: Value) -> Va
         "reveal_prompt_optimization_api_key" => reveal_prompt_optimization_api_key(state).await,
         "optimize_prompt" => match string_argument(&args, "text") {
             Ok(text) => optimize_prompt_command(state, text).await,
+            Err(error) => Err(error),
+        },
+        "apply_prompt_optimization_template" => match string_argument(&args, "templateId") {
+            Ok(template_id) => apply_prompt_optimization_template_command(state, template_id).await,
             Err(error) => Err(error),
         },
         "test_prompt_optimization" => {

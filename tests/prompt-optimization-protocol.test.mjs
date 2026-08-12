@@ -13,7 +13,7 @@ const backendSource = readFileSync(
 
 test("prompt optimization exposes the persisted upstream API format", () => {
   assert.match(cardSource, /<span>上游格式<\/span>/);
-  assert.match(cardSource, /import \{ Button, Card, Input, Select, Switch \}/);
+  assert.match(cardSource, /from "\.\/components\/semi"/);
   assert.match(cardSource, /PROMPT_OPTIMIZATION_PROTOCOL_OPTIONS/);
   assert.match(cardSource, /value=\{optimization\.protocol\}/);
   assert.match(cardSource, /label: "Responses API", value: "responses"/);

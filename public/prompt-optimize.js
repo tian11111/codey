@@ -13,11 +13,15 @@
 
   const settingsPath = "/settings/get";
   const optimizePath = "/api/optimize_prompt";
+  const applyTemplatePath = "/api/apply_prompt_optimization_template";
   const buttonId = "codey-prompt-optimize-button";
+  const menuButtonId = "codey-prompt-optimize-menu-button";
+  const menuId = "codey-prompt-optimize-menu";
   const styleId = "codey-prompt-optimize-style";
   const toastId = "codey-runtime-toast";
   const configChangedEvent = "codey:config-changed";
   const optimizeTimeoutMs = 75_000;
+  const applyTemplateTimeoutMs = 10_000;
   const scanDelayMs = 250;
   const repositionDelayMs = 100;
   const composerAnchorSelector = "[data-above-composer-conversation-id]";
@@ -33,6 +37,10 @@
   let ready = false;
   let inputElement = null;
   let button = null;
+  let menuButton = null;
+  let menuElement = null;
+  let menuOpen = false;
+  let templates = [];
   let busy = false;
   let scanTimer = 0;
   let repositionTimer = 0;
@@ -64,7 +72,7 @@
     const style = document.createElement("style");
     style.id = styleId;
     style.textContent = `
-      #${buttonId} {
+      #${buttonId}, #${menuButtonId} {
         -webkit-app-region: no-drag !important;
         pointer-events: auto !important;
         position: relative !important;
@@ -77,7 +85,6 @@
         min-height: 28px !important;
         height: 28px !important;
         margin: 0 6px 0 0;
-        padding: 0 8px;
         border: 0;
         border-radius: 999px;
         background: rgba(30, 30, 30, .92);
@@ -89,15 +96,47 @@
         opacity: .88;
         transition: opacity .15s ease, transform .15s ease;
       }
-      #${buttonId}:hover { opacity: 1; }
-      #${buttonId}:active { transform: translateY(1px); }
-      #${buttonId}:disabled { cursor: not-allowed; box-shadow: none; opacity: .42; }
+      #${buttonId} { padding: 0 8px; }
+      #${menuButtonId} { padding: 0 5px; margin-left: -6px; width: 22px; }
+      #${buttonId}:hover, #${menuButtonId}:hover { opacity: 1; }
+      #${buttonId}:active, #${menuButtonId}:active { transform: translateY(1px); }
+      #${buttonId}:disabled, #${menuButtonId}:disabled { cursor: not-allowed; box-shadow: none; opacity: .42; }
       #${buttonId}[data-busy="true"] { cursor: wait; opacity: .7; }
-      #${buttonId} svg { flex: 0 0 auto; width: 12px; height: 12px; }
+      #${buttonId} svg, #${menuButtonId} svg { flex: 0 0 auto; width: 12px; height: 12px; }
       #${buttonId} [data-codey-optimize-spinner] { display: none; animation: codey-prompt-optimize-spin .75s linear infinite; }
       #${buttonId}[data-busy="true"] [data-codey-optimize-icon] { display: none; }
       #${buttonId}[data-busy="true"] [data-codey-optimize-spinner] { display: block; }
       @keyframes codey-prompt-optimize-spin { to { transform: rotate(360deg); } }
+      #${menuId} {
+        -webkit-app-region: no-drag !important;
+        position: fixed !important;
+        z-index: 2147483642 !important;
+        display: none;
+        box-sizing: border-box;
+        min-width: 140px;
+        max-width: 260px;
+        padding: 4px;
+        border-radius: 10px;
+        background: rgba(30, 30, 30, .96);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+      }
+      #${menuId} button {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 7px 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #f5f5f5;
+        font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+        text-align: left;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #${menuId} button:hover { background: rgba(127, 127, 127, .25); }
       #${toastId} { -webkit-app-region: no-drag !important; position: fixed; right: 20px; bottom: 22px; z-index: 2147483645; max-width: 360px; border: 1px solid rgba(124, 140, 255, .4); border-radius: 11px; padding: 10px 13px; background: rgba(20, 24, 36, .97); color: #eef2ff; box-shadow: 0 12px 36px rgba(0,0,0,.4); font: 12px/1.45 system-ui, sans-serif; }
       #${toastId}[data-tone="error"] { border-color: rgba(248, 113, 113, .6); color: #fecaca; }
     `;
@@ -127,6 +166,101 @@
     `;
     element.addEventListener("click", handleClick, true);
     return element;
+  };
+
+  const createMenuButton = () => {
+    const element = document.createElement("button");
+    element.id = menuButtonId;
+    element.type = "button";
+    element.dataset.codeyPromptOptimize = "true";
+    element.setAttribute("aria-label", "选择优化指令模板");
+    element.setAttribute("aria-haspopup", "menu");
+    element.setAttribute("aria-expanded", "false");
+    element.disabled = true;
+    element.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9l6 6 6-6"></path>
+      </svg>
+    `;
+    element.addEventListener("click", handleMenuButtonClick, true);
+    return element;
+  };
+
+  const createMenu = () => {
+    const element = document.createElement("div");
+    element.id = menuId;
+    element.dataset.codeyPromptOptimize = "true";
+    element.setAttribute("role", "menu");
+    element.style.display = "none";
+    document.documentElement.appendChild(element);
+    return element;
+  };
+
+  const renderMenu = () => {
+    if (!menuElement) menuElement = createMenu();
+    menuElement.innerHTML = "";
+    const items = [
+      { id: "default", name: "默认指令" },
+      ...templates.map((template) => ({
+        id: template.id,
+        name: template.name,
+      })),
+    ];
+    for (const item of items) {
+      const itemElement = document.createElement("button");
+      itemElement.type = "button";
+      itemElement.dataset.codeyPromptOptimize = "true";
+      itemElement.setAttribute("role", "menuitem");
+      itemElement.textContent = item.name;
+      itemElement.addEventListener(
+        "click",
+        (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu();
+          applyTemplateAndOptimize(item.id);
+        },
+        true,
+      );
+      menuElement.appendChild(itemElement);
+    }
+  };
+
+  const positionMenu = () => {
+    if (!menuElement || !menuButton) return;
+    const rect = menuButton.getBoundingClientRect();
+    menuElement.style.top = `${rect.bottom + 4}px`;
+    menuElement.style.left = `${Math.max(
+      4,
+      Math.min(rect.left, window.innerWidth - menuElement.offsetWidth - 4),
+    )}px`;
+  };
+
+  const openMenu = () => {
+    if (busy || templates.length === 0) return;
+    renderMenu();
+    menuOpen = true;
+    menuElement.style.display = "block";
+    menuButton.setAttribute("aria-expanded", "true");
+    positionMenu();
+  };
+
+  const closeMenu = () => {
+    menuOpen = false;
+    if (menuElement) menuElement.style.display = "none";
+    if (menuButton) menuButton.setAttribute("aria-expanded", "false");
+  };
+
+  const handleMenuButtonClick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busy || !readComposerText().trim()) return;
+    if (menuOpen) {
+      closeMenu();
+    } else {
+      openMenu();
+    }
   };
 
   const installRuntimeToast = () => {
@@ -317,6 +451,16 @@
     if (!isMountedBefore(button, target.anchor, target.host)) {
       target.host.insertBefore(button, target.anchor);
     }
+    if (templates.length > 0) {
+      if (!menuButton) menuButton = createMenuButton();
+      if (button.nextElementSibling !== menuButton) {
+        target.host.insertBefore(menuButton, button.nextElementSibling);
+      }
+    } else if (menuButton) {
+      menuButton.remove();
+      menuButton = null;
+      closeMenu();
+    }
     button.style.top = "";
     button.style.left = "";
     button.style.display = "inline-flex";
@@ -345,6 +489,11 @@
       "aria-label",
       busy ? "正在优化提示词" : empty ? "请输入内容后优化" : "优化提示词",
     );
+    if (menuButton) {
+      const menuDisabled = busy || empty;
+      menuButton.disabled = menuDisabled;
+      if (menuDisabled) closeMenu();
+    }
   };
 
   const showError = (message) => {
@@ -374,6 +523,54 @@
     );
   };
 
+  const optimizeWithCurrentConfig = (text) => {
+    // `optimize_prompt` only ever receives the composer text; the active
+    // instruction always comes from the persisted configuration.
+    const bridgeCall = callBridge(optimizePath, { text });
+    return withTimeout(
+      bridgeCall,
+      optimizeTimeoutMs,
+      "优化请求超时，请稍后重试",
+    ).then((value) => {
+      if (value?.status === "failed") {
+        throw new Error(value.message || "优化失败");
+      }
+      const optimized =
+        typeof value?.optimized === "string" ? value.optimized : "";
+      if (!optimized) {
+        throw new Error("优化结果为空");
+      }
+      replaceComposerText(optimized);
+      if (inputElement?.focus) inputElement.focus();
+    });
+  };
+
+  const applyTemplateAndOptimize = (templateId) => {
+    const text = readComposerText().trim();
+    if (!text) return;
+    busy = true;
+    updateButtonState();
+    const applyCall = callBridge(applyTemplatePath, { templateId });
+    withTimeout(applyCall, applyTemplateTimeoutMs, "切换指令模板超时")
+      .then((value) => {
+        if (value?.status === "failed") {
+          throw new Error(value.message || "切换指令模板失败");
+        }
+        return optimizeWithCurrentConfig(text);
+      })
+      .catch((error) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : String(error || "切换指令模板失败");
+        showError(message);
+      })
+      .finally(() => {
+        busy = false;
+        updateButtonState();
+      });
+  };
+
   const handleClick = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -385,25 +582,7 @@
     }
     busy = true;
     updateButtonState();
-    const bridgeCall = callBridge(optimizePath, { text });
-    const result = withTimeout(
-      bridgeCall,
-      optimizeTimeoutMs,
-      "优化请求超时，请稍后重试",
-    );
-    result
-      .then((value) => {
-        if (value?.status === "failed") {
-          throw new Error(value.message || "优化失败");
-        }
-        const optimized =
-          typeof value?.optimized === "string" ? value.optimized : "";
-        if (!optimized) {
-          throw new Error("优化结果为空");
-        }
-        replaceComposerText(optimized);
-        if (inputElement?.focus) inputElement.focus();
-      })
+    optimizeWithCurrentConfig(text)
       .catch((error) => {
         const message =
           error instanceof Error ? error.message : String(error || "优化失败");
@@ -461,6 +640,20 @@
           nextEnabled =
             optimization?.enabled === true &&
             optimization.apiKeyConfigured === true;
+          const nextTemplates = Array.isArray(optimization?.templates)
+            ? optimization.templates
+                .filter(
+                  (template) =>
+                    template && template.id && template.name,
+                )
+                .map((template) => ({
+                  id: template.id,
+                  name: template.name,
+                }))
+            : [];
+          if (nextTemplates.length !== templates.length) {
+            templates = nextTemplates;
+          }
           if (nextEnabled !== enabled) {
             enabled = nextEnabled;
             refreshButton();
@@ -495,8 +688,10 @@
         const target = mutation.target;
         if (!target) return true;
         if (target === button || target.id === toastId) return false;
-        if (target.id === styleId) return false;
-        return !target.closest?.(`#${buttonId}, #${toastId}`);
+        if (target.id === styleId || target.id === menuId) return false;
+        return !target.closest?.(
+          `#${buttonId}, #${menuButtonId}, #${toastId}, #${menuId}`,
+        );
       });
       if (hasExternalMutation) scheduleScan();
     });
@@ -526,6 +721,15 @@
   window.addEventListener("hashchange", scheduleScan);
   window.addEventListener("popstate", scheduleScan);
   document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!menuOpen) return;
+      if (event.target?.closest?.(`#${menuId}, #${menuButtonId}`)) return;
+      closeMenu();
+    },
+    true,
+  );
+  document.addEventListener(
     "input",
     (event) => {
       if (event.target === inputElement) updateButtonState();
@@ -544,6 +748,7 @@
       enabled: enabled,
       hasInput: Boolean(inputElement && isVisible(inputElement)),
       hasButton: Boolean(button && button.style.display !== "none"),
+      hasTemplates: templates.length > 0,
       buttonBusy: Boolean(button && busy),
       buttonDisabled: Boolean(button?.disabled),
     }),

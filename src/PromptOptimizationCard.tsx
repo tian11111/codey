@@ -1,21 +1,42 @@
 import { memo, useId, useRef, useState } from "react";
 
 import {
+  IconCheck,
   IconChevronDown,
   IconEye,
   IconEyeOff,
   IconKey,
+  IconPencil,
   IconPlugConnected,
+  IconPlus,
   IconRefresh,
   IconRobot,
   IconSparkles,
+  IconTrash,
   IconWorld,
 } from "@tabler/icons-react";
 
-import type { CcSwitchStatus, Config, InlineResult } from "./App.types";
+import type {
+  CcSwitchStatus,
+  Config,
+  InlineResult,
+  PromptOptimizationTemplate,
+} from "./App.types";
 import { invoke } from "./api";
 import { errorText, withTimeout } from "./appUtils";
-import { Button, Card, Input, Select, Switch } from "./components/semi";
+import {
+  Button,
+  Card,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Select,
+  Switch,
+} from "./components/semi";
 
 const TEST_TIMEOUT_MS = 65_000;
 const FETCH_MODELS_TIMEOUT_MS = 20_000;
@@ -75,12 +96,66 @@ function PromptOptimizationCardComponent({
     text: "",
   });
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] =
+    useState<PromptOptimizationTemplate | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [templateInstruction, setTemplateInstruction] = useState("");
 
   const updateOptimization = (patch: Partial<Config["promptOptimization"]>) => {
     onConfigChange({
       ...config,
       promptOptimization: { ...optimization, ...patch },
     });
+  };
+
+  const updateTemplates = (templates: PromptOptimizationTemplate[]) => {
+    updateOptimization({ templates });
+  };
+
+  const openNewTemplateDialog = () => {
+    setEditingTemplate(null);
+    setTemplateName("");
+    setTemplateInstruction("");
+    setTemplateDialogOpen(true);
+  };
+
+  const openEditTemplateDialog = (template: PromptOptimizationTemplate) => {
+    setEditingTemplate(template);
+    setTemplateName(template.name);
+    setTemplateInstruction(template.instruction);
+    setTemplateDialogOpen(true);
+  };
+
+  const saveTemplate = () => {
+    const name = templateName.trim();
+    const instruction = templateInstruction.trim();
+    if (!name || !instruction) return;
+    const templates = [...optimization.templates];
+    if (editingTemplate) {
+      const index = templates.findIndex(
+        (template) => template.id === editingTemplate.id,
+      );
+      if (index >= 0) {
+        templates[index] = { ...templates[index], name, instruction };
+      } else {
+        templates.push({ id: editingTemplate.id, name, instruction });
+      }
+    } else {
+      templates.push({ id: crypto.randomUUID(), name, instruction });
+    }
+    updateTemplates(templates);
+    setTemplateDialogOpen(false);
+  };
+
+  const removeTemplate = (templateId: string) => {
+    updateTemplates(
+      optimization.templates.filter((template) => template.id !== templateId),
+    );
+  };
+
+  const applyTemplate = (template: PromptOptimizationTemplate) => {
+    updateOptimization({ instruction: template.instruction });
   };
   const showingSavedApiKey =
     optimization.apiKeyConfigured &&
@@ -571,6 +646,132 @@ function PromptOptimizationCardComponent({
                 spellCheck={false}
               />
             </label>
+
+            <div className="prompt-optimization-templates">
+              <div className="prompt-optimization-templates-header">
+                <span>指令模板</span>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  disabled={isBusy}
+                  onClick={openNewTemplateDialog}
+                >
+                  <IconPlus size={13} aria-hidden="true" />
+                  新增模板
+                </Button>
+              </div>
+              {optimization.templates.length === 0 ? (
+                <small className="prompt-optimization-templates-empty">
+                  模板可保存多套优化指令，之后可在 Codex 输入框旁的优化菜单中
+                  快速切换；「应用」会把模板指令设为当前优化指令。
+                </small>
+              ) : (
+                <ul className="prompt-optimization-templates-list">
+                  {optimization.templates.map((template) => (
+                    <li
+                      key={template.id}
+                      className="prompt-optimization-template-row"
+                    >
+                      <div className="prompt-optimization-template-info">
+                        <strong>{template.name}</strong>
+                        <small title={template.instruction}>
+                          {template.instruction}
+                        </small>
+                      </div>
+                      <div className="prompt-optimization-template-actions">
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          disabled={isBusy}
+                          onClick={() => applyTemplate(template)}
+                        >
+                          <IconCheck size={13} aria-hidden="true" />
+                          应用
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          disabled={isBusy}
+                          onClick={() => openEditTemplateDialog(template)}
+                        >
+                          <IconPencil size={13} aria-hidden="true" />
+                          编辑
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          disabled={isBusy}
+                          onClick={() => removeTemplate(template.id)}
+                        >
+                          <IconTrash size={13} aria-hidden="true" />
+                          删除
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <Dialog
+              open={templateDialogOpen}
+              onOpenChange={(open) => !open && setTemplateDialogOpen(false)}
+            >
+              <DialogContent container={container}>
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingTemplate ? "编辑指令模板" : "新增指令模板"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    模板保存后可在 Codex 输入框旁的优化菜单中切换。
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="prompt-optimization-template-form">
+                  <label className="field">
+                    <span>名称</span>
+                    <Input
+                      value={templateName}
+                      disabled={isBusy}
+                      onChange={(event) => setTemplateName(event.target.value)}
+                      placeholder="简洁版"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>优化指令</span>
+                    <textarea
+                      className="prompt-optimization-instruction"
+                      value={templateInstruction}
+                      disabled={isBusy}
+                      onChange={(event) =>
+                        setTemplateInstruction(event.target.value)
+                      }
+                      rows={4}
+                      placeholder="模板的优化指令…"
+                      spellCheck={false}
+                    />
+                  </label>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setTemplateDialogOpen(false)}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    disabled={
+                      isBusy ||
+                      !templateName.trim() ||
+                      !templateInstruction.trim()
+                    }
+                    onClick={saveTemplate}
+                  >
+                    保存模板
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         ) : null}
       </Card>

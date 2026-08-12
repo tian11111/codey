@@ -19,6 +19,7 @@ export const CODEY_API_COMMANDS = [
   "reveal_notification_channel",
   "reveal_prompt_optimization_api_key",
   "optimize_prompt",
+  "apply_prompt_optimization_template",
   "test_prompt_optimization",
   "fetch_prompt_optimization_models",
   "check_for_updates",

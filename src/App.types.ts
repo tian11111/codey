@@ -14,6 +14,12 @@ export type Profile = {
   ccSwitchReadOnly: boolean;
 };
 
+export type PromptOptimizationTemplate = {
+  id: string;
+  name: string;
+  instruction: string;
+};
+
 export type PromptOptimizationConfig = {
   enabled: boolean;
   baseUrl: string;
@@ -23,6 +29,7 @@ export type PromptOptimizationConfig = {
   model: string;
   protocol: "responses" | "chatCompletions";
   instruction: string;
+  templates: PromptOptimizationTemplate[];
 };
 
 export type Config = {

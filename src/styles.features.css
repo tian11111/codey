@@ -978,3 +978,93 @@
 .input-shell input:focus {
   outline: none !important;
 }
+
+/* 指令模板区块 */
+.prompt-optimization-templates {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.prompt-optimization-templates-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prompt-optimization-templates-header > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6e6e73;
+}
+
+.prompt-optimization-templates-empty {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6e6e73;
+}
+
+.prompt-optimization-templates-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prompt-optimization-template-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.prompt-optimization-template-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prompt-optimization-template-info strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.prompt-optimization-template-info small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #6e6e73;
+}
+
+.prompt-optimization-template-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.prompt-optimization-template-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.prompt-optimization-template-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt-optimization-template-form label > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6e6e73;
+}
